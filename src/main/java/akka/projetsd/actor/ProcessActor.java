@@ -8,6 +8,8 @@ import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import java.util.Objects;
+import java.util.Random;
+
 
 /**
  * Acteur symbolisant un processus dans l'algorithme d'éléction Chang-Roberts
@@ -35,10 +37,6 @@ public class ProcessActor extends AbstractActor{
     private ActorRef nextActor;
     
     /**
-     * Reference du processus précédent dans l'anneau (null par défaut)
-     */
-    private ActorRef previousActor;
-    /**
      * UID du processus généré avec la methode hash de java lors de l'initialisation de l'anneau
      */
     private int UID;
@@ -55,22 +53,22 @@ public class ProcessActor extends AbstractActor{
         this.leader = false;
         this.rank = -1;
         this.nextActor = null;
-        this.previousActor = null;
         this.UID = -1;
         this.leaderUID=-1;
     }
 
     @Override
     public int hashCode() {
-        int hash = 7;
-        hash = 89 * hash + (this.participant ? 1 : 0);
-        hash = 89 * hash + (this.leader ? 1 : 0);
-        hash = 89 * hash + this.rank;
-        hash = 89 * hash + Objects.hashCode(this.nextActor);
-        hash = 89 * hash + Objects.hashCode(this.previousActor);
-        hash = 89 * hash + this.UID;
-        hash = 89 * hash + this.leaderUID;
-        return hash;
+        int hash = 5;
+        hash = 5 * hash + (this.participant ? 1 : 0);
+        hash = 5 * hash + (this.leader ? 1 : 0);
+        hash = 5 * hash + this.rank;
+        hash = 5 * hash + Objects.hashCode(this.nextActor);
+
+        Random random = new Random();
+        int randomInt1 = random.nextInt(5) + 1;
+        int randomInt2 = random.nextInt(5) + 1;
+        return hash/randomInt1*randomInt2;
     }
 
     @Override
@@ -100,13 +98,8 @@ public class ProcessActor extends AbstractActor{
         if (this.leaderUID != other.leaderUID) {
             return false;
         }
-        if (!Objects.equals(this.nextActor, other.nextActor)) {
-            return false;
-        }
-        return Objects.equals(this.previousActor, other.previousActor);
+        return Objects.equals(this.nextActor, other.nextActor);
     }
-
-   
     
     
 
@@ -114,33 +107,51 @@ public class ProcessActor extends AbstractActor{
     @Override
     public AbstractActor.Receive createReceive() {
             return receiveBuilder()
-                            .match(ElectionMessage.class, message -> processElectionMessage(message))
-                            .match(ElectedMessage.class, message -> processElectedMessage(message))
+                            .match(StartElectionMessage.class, message -> receivedStartElectionMessage(message))
+                            .match(ElectionMessage.class, message -> receivedElectionMessage(message))
+                            .match(ElectedMessage.class, message -> receivedElectedMessage(message))
+                            .match(RingTestMessage.class, message -> receivedRingTestMessage(message))
+                            .match(InitializeRingMessage.class, message -> initializeRing(message))
                             .build();
     }
 
+    private void receivedStartElectionMessage(StartElectionMessage message){
+        System.out.println("Démarrage de l'élection");
+        System.out.println("Le processus n°"+this.rank+" envoie message d'election à son voisin");
+        ElectionMessage electionMessage = new ElectionMessage(this.UID);
+        this.nextActor.tell(electionMessage, getSelf());
+    }
     /**
      * Comportement d'un acteur s'il recoit un message d'election
      * @param message 
      */
-    private void processElectionMessage(ElectionMessage message){
+    private void receivedElectionMessage(ElectionMessage message){
         if(message.UID>this.UID){
+            System.out.println("ELECTION : UID reçu supérieur à l'IUD du process n°"+this.rank+" UID " +this.UID+" Le process devient participant et forward le message");
             this.participant=true;
             //FORWARD to next actor
+            this.nextActor.forward(message,getContext());
         }
         else if(message.UID<this.UID && !this.participant){
+            System.out.println("ELECTION : UID reçu inférieur à l'IUD du process n°"+this.rank+" UID " +this.UID+" Le process est non participant message envoyé au voisin en remplaçant l'IUD");
             message.UID=this.UID;
             this.participant=true;
             //SEND to next actor
+            this.nextActor.tell(message,getSelf());
         }
         else if(message.UID<this.UID && this.participant){
             //DISCARD MESSAGE
+            System.out.println("ELECTION : UID reçu inférieur à l'IUD du process n°"+this.rank+" UID " +this.UID+" Le process est participant message supprimé");
+
         }
         else if(message.UID==this.UID){
+            System.out.println("ELECTION : UID reçu égal à l'IUD du process n°"+this.rank+" UID " +this.UID+" Il est nommé leader et envoi un message elu à son voisin");
             this.leader=true;
             this.participant=false;
-            ElectedMessage electedMessage = new ElectedMessage(this.UID);
+            message.UID=this.UID;
             //SEND elected message
+            ElectedMessage electedMessage = new ElectedMessage(this.UID);
+            this.nextActor.tell(electedMessage,getSelf());
         }
     }
 
@@ -148,41 +159,69 @@ public class ProcessActor extends AbstractActor{
      * Comportement d'un acteur s'il recoit un message elu
      * @param message 
      */
-    private void processElectedMessage(ElectedMessage message){
+    private void receivedElectedMessage(ElectedMessage message){
         if(message.UID!=this.UID){
+            System.out.println("ELU : IUD du message différent du processus n°"+this.rank+". Le leader est l'UID : "+message.UID);
             this.participant=false;
             this.leaderUID=message.UID;
             //FORWARD elected message
+            this.nextActor.forward(message,getContext());
         }
         else{
+            System.out.println("ELU : IUD du message égal à celui du processus n°"+this.rank+". Fin de la transmission message élu");
             this.leaderUID=message.UID;
         }
     }
     
-    private void initializeRing(InitializeRingMessage message){        
+    private void receivedRingTestMessage(RingTestMessage message){
         
-            if(message.rank>message.nbProcess){
-                System.out.println("Ring construit");
+        if(!message.text.equals("test")&&this.rank==1){
+            System.out.println("Message obtenu a la fin de l'anneau :\n"+message.text);
+        }
+        else if(this.rank==1){
+            System.out.println("Message au début de l'anneau :\n"+message.text);
+            String text = "\nprocess n°"+this.rank+" UID :"+this.UID;
+            message.text+=text;
+            this.nextActor.forward(message, getContext());
+        }
+        else{
+            String text = "\nprocess n°"+this.rank+" UID :"+this.UID;
+            message.text+=text;
+            this.nextActor.forward(message, getContext());
+        }
+    }
+    
+    /**
+     * Initialise l'anneau
+     * @param message 
+     */
+    private void initializeRing(InitializeRingMessage message){        
+            int nextRank = 0;
+            if(message.rank==1){
+                System.out.println("Début de la construction de l'anneau");
             }
-            else if(message.rank==1){
-                this.nextActor = null; //recupere l'actor numero rank+1 depuis la liste des acteurs
-                this.previousActor = null; //recupere l'actor numero nbProcess depuis la liste des acteurs
+            if(message.rank>message.nbProcess){
+                System.out.println("Fin de la construction de l'anneau");
             }
             else if(message.rank==message.nbProcess){
-                this.nextActor = null; //recuperer l'actor numero 1 depuis la liste des acteurs crées
-                this.previousActor = null; //recuperer l'actor rank-1 
+                nextRank = 1;
+                this.rank = message.rank;
+                this.UID = this.hashCode();               
+                this.nextActor=getSender();
+                message.rank++;
+                nextActor.forward(message, getContext());
             }
             else{
-                this.nextActor = null; //recupere l'actor rank+1 depuis la liste des acteurs
-                this.previousActor = null; //recupere l'actor rank-1 depuis la liste des acteurs
-            }
-        
-            this.rank = message.rank;
-            this.UID = this.hashCode();
-            message.rank++;
-            //FORWARD le message au nextActor      
-        
-        
+                nextRank = message.rank+1;
+                this.rank = message.rank;
+                this.UID = this.hashCode();
+                String nextActorName = "process"+nextRank;
+                this.nextActor = getContext().actorOf(ProcessActor.props(), nextActorName);
+                
+                message.rank++;
+                nextActor.forward(message, getContext());
+            }            
+                        
     }
 
     // Méthode servant à la création d'un acteur
@@ -193,10 +232,15 @@ public class ProcessActor extends AbstractActor{
     // Définition des messages en inner classes
     public interface Message {}
 
+    public static class StartElectionMessage{
+        public StartElectionMessage(){
+            
+        }
+    }
     /**
      * Message d'election
      */
-    public static class ElectionMessage implements Message {
+    private static class ElectionMessage implements Message {
             public int UID;
             public ElectionMessage(int UID) {
                 this.UID=UID;
@@ -206,11 +250,17 @@ public class ProcessActor extends AbstractActor{
     /**
      * Message d'elu
      */
-    public static class ElectedMessage implements Message {
+    private static class ElectedMessage implements Message {
             public int UID;
             public ElectedMessage(int UID) {
                 this.UID=UID;
             }
+    }
+    
+    public static class RingTestMessage implements Message{
+        protected String text="test";
+        public RingTestMessage(){
+        }
     }
     
     /**
@@ -218,10 +268,9 @@ public class ProcessActor extends AbstractActor{
      * Contient le rang du prochain processus dans l'anneau et le nombre de processus dans l'anneau
      */
     public static class InitializeRingMessage implements Message{
-        public int rank;
+        private int rank=1;
         public int nbProcess;
-        public InitializeRingMessage(int rank, int nbProcess){
-            this.rank=rank;
+        public InitializeRingMessage(int nbProcess){
             this.nbProcess=nbProcess;
         }
     }
